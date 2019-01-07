@@ -31,6 +31,11 @@ public final class Domain: NSManagedObject, CRUD {
     public override func awakeFromInsert() {
         super.awakeFromInsert()
     }
+    
+    public class func getForUrl(_ url: URL, context: NSManagedObjectContext) -> Domain? {
+        let domainString = url.domainURL.absoluteString
+        return Domain.first(where: NSPredicate(format: "url == %@", domainString), context: context)
+    }
 
     public class func getOrCreateForUrl(_ url: URL, context: NSManagedObjectContext, save: Bool = true) -> Domain {
         let domainString = url.domainURL.absoluteString
