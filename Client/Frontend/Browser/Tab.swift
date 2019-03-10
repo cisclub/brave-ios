@@ -189,8 +189,6 @@ class Tab: NSObject {
             configuration!.preferences = WKPreferences()
             configuration!.preferences.javaScriptCanOpenWindowsAutomatically = false
             configuration!.allowsInlineMediaPlayback = true
-            // Enables Zoom in website by ignoring their javascript based viewport Scale limits.
-            configuration!.ignoresViewportScaleLimits = true
             let webView = TabWebView(frame: .zero, configuration: configuration!)
             webView.delegate = self
             configuration = nil
@@ -211,9 +209,15 @@ class Tab: NSObject {
 
             self.webView = webView
             self.webView?.addObserver(self, forKeyPath: KVOConstants.URL.rawValue, options: .new, context: nil)
-            self.userScriptManager = UserScriptManager(tab: self, isFingerprintingProtectionEnabled: Preferences.Shields.fingerprintingProtection.value)
+            self.userScriptManager = UserScriptManager(tab: self, isFingerprintingProtectionEnabled: Preferences.Shields.fingerprintingProtection.value, isCookieBlockingEnabled: Preferences.Privacy.blockAllCookies.value)
             tabDelegate?.tab?(self, didCreateWebView: webView)
         }
+    }
+    
+    func resetWebView(config: WKWebViewConfiguration) {
+        configuration = config
+        deleteWebView()
+        contentScriptManager.helpers.removeAll()
     }
     
     func restore(_ webView: WKWebView, restorationData: SavedTab?) {
@@ -306,7 +310,7 @@ class Tab: NSObject {
         guard let lastTitle = lastTitle, !lastTitle.isEmpty else {
             if let title = url?.absoluteString {
                 return title
-            } else if let tab = TabMO.get(fromId: id, context: DataController.viewContext) {
+            } else if let tab = TabMO.get(fromId: id) {
                 return tab.title ?? tab.url ?? ""
             }
             return ""

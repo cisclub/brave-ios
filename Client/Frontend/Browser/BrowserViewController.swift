@@ -186,9 +186,9 @@ class BrowserViewController: UIViewController {
         Preferences.Privacy.privateBrowsingOnly.observe(from: self)
         Preferences.General.tabBarVisibility.observe(from: self)
         Preferences.Shields.allShields.forEach { $0.observe(from: self) }
-        
+        Preferences.Privacy.blockAllCookies.observe(from: self)
         // Lists need to be compiled before attempting tab restoration
-        contentBlockListDeferred = ContentBlockerHelper.compileLists()
+        contentBlockListDeferred = ContentBlockerHelper.compileBundledLists()
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -419,8 +419,6 @@ class BrowserViewController: UIViewController {
         
         #if NO_SYNC
         if sync.syncSeedArray == nil { return }
-        
-        sync.leaveSyncGroup()
         
         let msg = """
             Sync has been disabled, as it will not be included in the next couple of production builds.
@@ -667,8 +665,8 @@ class BrowserViewController: UIViewController {
             webViewContainerTopOffset = make.top.equalTo(readerModeBar?.snp.bottom ?? self.header.snp.bottom).constraint
 
             let findInPageHeight = (findInPageBar == nil) ? 0 : UIConstants.ToolbarHeight
-            if let footerView = self.footer {
-                make.bottom.equalTo(footerView.snp.top).offset(-findInPageHeight)
+            if let toolbar = self.toolbar {
+                make.bottom.equalTo(toolbar.snp.top).offset(-findInPageHeight)
             } else {
                 make.bottom.equalTo(self.view).offset(-findInPageHeight)
             }
@@ -694,7 +692,7 @@ class BrowserViewController: UIViewController {
             
             make.left.right.equalTo(self.view)
             if self.homePanelIsInline {
-                make.bottom.equalTo(self.footer?.snp.top ?? self.view.snp.bottom)
+                make.bottom.equalTo(self.toolbar?.snp.top ?? self.view.snp.bottom)
             } else {
                 make.bottom.equalTo(self.view.snp.bottom)
             }
@@ -705,8 +703,8 @@ class BrowserViewController: UIViewController {
             make.width.equalTo(self.view.snp.width)
             if let keyboardHeight = keyboardState?.intersectionHeightForView(self.view), keyboardHeight > 0 {
                 make.bottom.equalTo(self.view).offset(-keyboardHeight)
-            } else if let footer = self.footer {
-                make.bottom.equalTo(footer.snp.top)
+            } else if let toolbar = self.toolbar {
+                make.bottom.equalTo(toolbar.snp.top)
             } else {
                 make.bottom.equalTo(self.view)
             }
@@ -1363,7 +1361,8 @@ extension BrowserViewController: QRCodeViewControllerDelegate {
 
 extension BrowserViewController: SettingsDelegate {
     func settingsOpenURLInNewTab(_ url: URL) {
-        self.openURLInNewTab(url, isPrivileged: false)
+        let forcedPrivate = PrivateBrowsingManager.shared.isPrivateBrowsing
+        self.openURLInNewTab(url, isPrivate: forcedPrivate, isPrivileged: false)
     }
     
     func settingsOpenURLs(_ urls: [URL]) {
@@ -1564,9 +1563,13 @@ extension BrowserViewController: URLBarDelegate {
     }
 
     func urlBar(_ urlBar: URLBarView, didSubmitText text: String) {
+        processAddressBar(text: text, visitType: nil)
+    }
+
+    func processAddressBar(text: String, visitType: VisitType?) {
         if let fixupURL = URIFixup.getURL(text) {
             // The user entered a URL, so use it.
-            finishEditingAndSubmit(fixupURL, visitType: VisitType.typed)
+            finishEditingAndSubmit(fixupURL, visitType: visitType ?? .typed)
             return
         }
 
@@ -1587,7 +1590,7 @@ extension BrowserViewController: URLBarDelegate {
                 urlString.replaceSubrange(range, with: escapedQuery)
 
                 if let url = URL(string: urlString) {
-                    self.finishEditingAndSubmit(url, visitType: VisitType.typed)
+                    self.finishEditingAndSubmit(url, visitType: visitType ?? .typed)
                     return
                 }
             }
@@ -2098,7 +2101,7 @@ extension BrowserViewController: TabManagerDelegate {
 }
 
 /// List of schemes that are allowed to be opened in new tabs.
-private let schemesAllowedToBeOpenedAsPopups = ["http", "https", "javascript", "data", "about"]
+private let schemesAllowedToBeOpenedAsPopups = ["http", "https", "javascript", "about"]
 
 extension BrowserViewController: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -2894,8 +2897,8 @@ extension BrowserViewController: HomeMenuControllerDelegate {
 
 extension BrowserViewController: TopSitesDelegate {
     
-    func didSelectUrl(url: URL) {
-        finishEditingAndSubmit(url, visitType: .bookmark)
+    func didSelect(input: String) {
+        processAddressBar(text: input, visitType: .bookmark)
     }
     
     func didTapDuckDuckGoCallout() {
@@ -2919,8 +2922,19 @@ extension BrowserViewController: PreferencesObserver {
              Preferences.Shields.blockScripts.key,
              Preferences.Shields.blockPhishingAndMalware.key,
              Preferences.Shields.blockImages.key,
-             Preferences.Shields.fingerprintingProtection.key:
+             Preferences.Shields.fingerprintingProtection.key,
+             Preferences.Shields.useRegionAdBlock.key:
             tabManager.allTabs.forEach { $0.webView?.reload() }
+        case Preferences.Privacy.blockAllCookies.key:
+            // All `block all cookies` toggle requires a hard reset of Webkit configuration.
+            tabManager.reset()
+            if !Preferences.Privacy.blockAllCookies.value {
+                tabManager.allTabs.forEach {
+                    if let url: URL = $0.webView?.url {
+                        $0.loadRequest(PrivilegedRequest(url: url) as URLRequest)
+                    }
+                }
+            }
         default:
             log.debug("Received a preference change for an unknown key: \(key) on \(type(of: self))")
             break
