@@ -186,7 +186,7 @@ class BrowserViewController: UIViewController {
         Preferences.Privacy.privateBrowsingOnly.observe(from: self)
         Preferences.General.tabBarVisibility.observe(from: self)
         Preferences.Shields.allShields.forEach { $0.observe(from: self) }
-        
+        Preferences.Privacy.blockAllCookies.observe(from: self)
         // Lists need to be compiled before attempting tab restoration
         contentBlockListDeferred = ContentBlockerHelper.compileLists()
     }
@@ -419,8 +419,6 @@ class BrowserViewController: UIViewController {
         
         #if NO_SYNC
         if sync.syncSeedArray == nil { return }
-        
-        sync.leaveSyncGroup()
         
         let msg = """
             Sync has been disabled, as it will not be included in the next couple of production builds.
@@ -667,8 +665,8 @@ class BrowserViewController: UIViewController {
             webViewContainerTopOffset = make.top.equalTo(readerModeBar?.snp.bottom ?? self.header.snp.bottom).constraint
 
             let findInPageHeight = (findInPageBar == nil) ? 0 : UIConstants.ToolbarHeight
-            if let footerView = self.footer {
-                make.bottom.equalTo(footerView.snp.top).offset(-findInPageHeight)
+            if let toolbar = self.toolbar {
+                make.bottom.equalTo(toolbar.snp.top).offset(-findInPageHeight)
             } else {
                 make.bottom.equalTo(self.view).offset(-findInPageHeight)
             }
@@ -694,7 +692,7 @@ class BrowserViewController: UIViewController {
             
             make.left.right.equalTo(self.view)
             if self.homePanelIsInline {
-                make.bottom.equalTo(self.footer?.snp.top ?? self.view.snp.bottom)
+                make.bottom.equalTo(self.toolbar?.snp.top ?? self.view.snp.bottom)
             } else {
                 make.bottom.equalTo(self.view.snp.bottom)
             }
@@ -705,8 +703,8 @@ class BrowserViewController: UIViewController {
             make.width.equalTo(self.view.snp.width)
             if let keyboardHeight = keyboardState?.intersectionHeightForView(self.view), keyboardHeight > 0 {
                 make.bottom.equalTo(self.view).offset(-keyboardHeight)
-            } else if let footer = self.footer {
-                make.bottom.equalTo(footer.snp.top)
+            } else if let toolbar = self.toolbar {
+                make.bottom.equalTo(toolbar.snp.top)
             } else {
                 make.bottom.equalTo(self.view)
             }
@@ -2921,6 +2919,16 @@ extension BrowserViewController: PreferencesObserver {
              Preferences.Shields.blockImages.key,
              Preferences.Shields.fingerprintingProtection.key:
             tabManager.allTabs.forEach { $0.webView?.reload() }
+        case Preferences.Privacy.blockAllCookies.key:
+            // All `block all cookies` toggle requires a hard reset of Webkit configuration.
+            tabManager.reset()
+            if !Preferences.Privacy.blockAllCookies.value {
+                tabManager.allTabs.forEach {
+                    if let url: URL = $0.webView?.url {
+                        $0.loadRequest(PrivilegedRequest(url: url) as URLRequest)
+                    }
+                }
+            }
         default:
             log.debug("Received a preference change for an unknown key: \(key) on \(type(of: self))")
             break
